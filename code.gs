@@ -1,17 +1,13 @@
-function checkDiff() {
+function main() {
   const targetUrl = PropertiesService.getScriptProperties().getProperty('TARGET_URL')
+  
   const response = UrlFetchApp.fetch(targetUrl)
-  Logger.log(pdfToText(response.getBlob()))
+  const pdfBlob = response.getBlob()
 
-  // TODO: diffを検出する
-}
-
-function pdfToText(pdfBlob) {
-  const baseName = pdfBlob.getName().replace(/\.pdf$/, `-${Utilities.getUuid()}`)
-
+  // pdf to text
   const gdocFile = Drive.Files.insert(
     {
-      title: baseName.concat('.gdoc'),
+      title: 'tmp.gdoc',
       mimeType: pdfBlob.getContentType()
     },
     pdfBlob,
@@ -21,22 +17,42 @@ function pdfToText(pdfBlob) {
     }
   )  
   const text = DocumentApp.openById(gdocFile.id).getBody().getText()
+
+  // delete tmp gdoc
   Drive.Files.remove(gdocFile.id)
-  
+
+  // extract services
   var abjServices = {}
   const matched = text.matchAll(/(ABJ \d+)\s((?:(?!ABJ).)*)/g)
   Array.from(matched).forEach(([, abjID, service]) => {
     abjServices[abjID] = service
   })
 
-  const jsonFileName = baseName.concat('.json')
-  const jsonFile = Drive.Files.insert(
+  // save services
+  const fileName = jsonFileName(new Date())
+  const servicesJson = Drive.Files.insert(
     {
-      title: jsonFileName,
+      title: fileName,
       mimeType: MimeType.PLAIN_TEXT
     },
-    Utilities.newBlob(JSON.stringify(abjServices), MimeType.PLAIN_TEXT, jsonFileName)
+    Utilities.newBlob(JSON.stringify(abjServices), MimeType.PLAIN_TEXT, fileName)
   )
 
-  return jsonFile.id
+  // compare
+  // TODO: 期待したとおりに取れてないので直す
+  const files = Array.from(Drive.Files.list({ q: { name: jsonFileName(new Date(Date.now() - 1000 * 3600 * 24)) }}))
+  
+  if (files.length > 0) {
+    const currentServices = JSON.parse(DocumentApp.openById(servicesJson.id).getBody().getText())
+    const oldServices = JSON.parse(DocumentApp.openById(files[0].id).getBody().getText())
+
+    const diff = Object.keys(currentServices).filter(key => oldServices[key] === undefined)
+    Logger.log(diff)
+  } else {
+    Logger.log('Cannot compare')
+  }
+}
+
+function jsonFileName(date) {
+  return `ABJServices-${date.toISOString().split('T')[0]}.json`
 }
